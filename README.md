@@ -1,5 +1,9 @@
 # obsidian-vault-mcp
 
+![GitHub Sponsors](https://img.shields.io/github/sponsors/bkuebler)
+[![codecov](https://codecov.io/github/bkuebler/obsidian-vault-mcp/graph/badge.svg?token=NDE84P5R5S)](https://codecov.io/github/bkuebler/obsidian-vault-mcp)
+[![Maintainability](https://qlty.sh/gh/bkuebler/projects/obsidian-vault-mcp/maintainability.svg)](https://qlty.sh/gh/bkuebler/projects/obsidian-vault-mcp)
+
 An MCP server that operates directly on Obsidian vault git repositories.
 No Obsidian app required — works headless, supports multiple vaults, and handles git sync automatically.
 
