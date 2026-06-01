@@ -1,9 +1,11 @@
+.git/
+*.md
 .env*
 __pycache__/
 .ruff_cache/
+tests/
 .venv/
 *.egg-info/
 .pytest_cache/
+.claude/
 .coverage
-
-.claude/settings.local.json

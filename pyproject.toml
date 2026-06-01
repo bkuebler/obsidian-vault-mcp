@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsidian-vault-mcp"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp",
+    "python-frontmatter",
+]
+
+[project.scripts]
+obsidian-vault-mcp = "obsidian_vault_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["obsidian_vault_mcp*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov=obsidian_vault_mcp --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
