@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=obsidian_vault_mcp --cov-report=term-missing --cov-report=html"
+addopts = "--cov --cov-branch --cov-report=xml"
 
 [tool.coverage.run]
 branch = true

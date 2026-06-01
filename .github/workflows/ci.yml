@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   validate:
@@ -24,3 +26,9 @@ jobs:
           python-version: "3.13"
       - run: uv sync --extra dev
       - run: make test
+      - uses: codecov/codecov-action@v5
+        if: github.event_name == 'push'
+        with:
+          files: coverage.xml
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,4 +1,4 @@
-.PHONY: test validate build
+.PHONY: test validate build clean prepare
 
 test:
 	.venv/bin/pytest
@@ -9,3 +9,10 @@ validate:
 
 build:
 	docker build -t obsidian-vault-mcp:latest .
+
+clean:
+	git clean -fdx .
+
+prepare:
+	uv venv
+	uv pip install -e ".[dev]"
