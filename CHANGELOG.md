@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-01
+
+### Fixed
+
+- Docker image now published as a multi-platform manifest (`linux/amd64`, `linux/arm64`)
+
 ## [0.1.0] - 2026-06-01
 
 ### Added
@@ -40,5 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make build` — builds the Docker image as `obsidian-vault-mcp:latest`
 - SDK contract tests to guard against breaking changes in MCP SDK upgrades
 
-[Unreleased]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bkuebler/obsidian-vault-mcp/releases/tag/v0.1.0
