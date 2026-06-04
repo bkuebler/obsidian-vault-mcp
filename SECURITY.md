@@ -7,7 +7,8 @@ receives security updates.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
+| 0.1.x   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -39,3 +40,5 @@ Security issues that are particularly relevant to this project:
   than intended
 - **Configuration leakage** — vault repo URLs or credentials exposed through
   MCP tool responses
+- **Convention file injection** — an agent using `note_*` tools to overwrite
+  `AGENTS.md` or `CLAUDE.md` and alter the instructions surfaced to other agents
