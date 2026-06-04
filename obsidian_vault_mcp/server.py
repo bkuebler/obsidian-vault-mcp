@@ -81,6 +81,7 @@ def update_conventions(
     try:
         vault_name = vault or _default
         vault_obj = _get_vault(vault_name)
+        vc = _vault_configs[vault_name]
         agents_md = vault_obj.root / "AGENTS.md"
         if section is not None:
             current = (
@@ -90,10 +91,20 @@ def update_conventions(
         else:
             new_text = content
         agents_md.write_text(new_text, encoding="utf-8")
-        conventions.refresh(vault_name, vault_obj.root)
         git_sync.commit(vault_obj.root, "chore: update conventions")
+        if not vc.is_local:
+            pull_result = git_sync.pull_rebase(vault_obj.root)
+            if pull_result.conflict:
+                conventions.refresh(vault_name, vault_obj.root)
+                _rebuild_instructions()
+                return "error: conventions diverged — re-read with vault_conventions and reapply"
+            git_sync.push(vault_obj.root)
+            msg = "conventions updated and pushed"
+        else:
+            msg = "conventions updated (local only)"
+        conventions.refresh(vault_name, vault_obj.root)
         _rebuild_instructions()
-        return "ok"
+        return msg
     except (ValueError, OSError) as e:
         return f"error: {e}"
 
@@ -175,12 +186,23 @@ def vault_sync(vault: str | None = None, message: str | None = None) -> str:
     if vc.is_local:
         return "committed (local only)" if dirty else "nothing to commit or push"
 
+    pull_result = git_sync.pull_rebase(path)
+    if pull_result.conflict:
+        return f"rebase conflict: {', '.join(pull_result.files)}"
+
+    agents_md = path / "AGENTS.md"
+    if agents_md.exists():
+        if agents_md.read_text(encoding="utf-8") != conventions._cache.get(
+            vault_name, ""
+        ):
+            conventions.refresh(vault_name, path)
+
     ahead, _ = git_sync.ahead_behind(path)
     if ahead > 0:
         git_sync.push(path)
         if dirty:
             return "committed and pushed"
-        return f"nothing to commit, pushed {ahead} existing commit"
+        return f"nothing to commit, pushed {ahead} existing commit after rebase"
     return "nothing to commit or push"
 
 

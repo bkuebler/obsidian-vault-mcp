@@ -162,3 +162,82 @@ def test_startup_loads_conventions_for_each_vault(monkeypatch, tmp_path):
     ):
         main([], vaults_root=tmp_path)
     assert mock_load.call_count == 2
+
+
+# --- 10.4 Startup seeding race ---
+
+
+def test_startup_seed_after_pull_not_before(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAULT_PERSONAL_REPO", "https://ghp_x@github.com/u/p.git")
+    monkeypatch.setenv("VAULT_DEFAULT", "personal")
+    call_order = []
+    with (
+        patch(
+            "obsidian_vault_mcp.__main__.git_sync.init_vault",
+            side_effect=lambda *a, **k: call_order.append("init"),
+        ),
+        patch(
+            "obsidian_vault_mcp.__main__.conventions.load",
+            side_effect=lambda *a, **k: call_order.append("load"),
+        ),
+        patch("obsidian_vault_mcp.__main__.server.setup"),
+        patch("obsidian_vault_mcp.__main__.server.mcp.run"),
+    ):
+        main([], vaults_root=tmp_path)
+    assert call_order.index("init") < call_order.index("load")
+
+
+def test_startup_seed_pushes_immediately_remote(monkeypatch, tmp_path):
+    monkeypatch.setenv("VAULT_PERSONAL_REPO", "https://ghp_x@github.com/u/p.git")
+    monkeypatch.setenv("VAULT_DEFAULT", "personal")
+    vault_path = tmp_path / "personal"
+    vault_path.mkdir()
+    with (
+        patch("obsidian_vault_mcp.__main__.git_sync.init_vault"),
+        patch("obsidian_vault_mcp.git_sync.commit_file"),
+        patch("obsidian_vault_mcp.git_sync.push") as mock_push,
+        patch("obsidian_vault_mcp.__main__.server.setup"),
+        patch("obsidian_vault_mcp.__main__.server.mcp.run"),
+    ):
+        main([], vaults_root=tmp_path)
+    mock_push.assert_called_once()
+
+
+def test_startup_seed_handles_lost_race(monkeypatch, tmp_path):
+    import subprocess as sp
+
+    monkeypatch.setenv("VAULT_PERSONAL_REPO", "https://ghp_x@github.com/u/p.git")
+    monkeypatch.setenv("VAULT_DEFAULT", "personal")
+    vault_path = tmp_path / "personal"
+    vault_path.mkdir()
+    with (
+        patch("obsidian_vault_mcp.__main__.git_sync.init_vault"),
+        patch("obsidian_vault_mcp.git_sync.commit_file"),
+        patch(
+            "obsidian_vault_mcp.git_sync.push",
+            side_effect=sp.CalledProcessError(1, "git push"),
+        ),
+        patch("obsidian_vault_mcp.git_sync.reset_hard") as mock_reset,
+        patch("obsidian_vault_mcp.__main__.conventions.refresh") as mock_refresh,
+        patch("obsidian_vault_mcp.__main__.server.setup"),
+        patch("obsidian_vault_mcp.__main__.server.mcp.run"),
+    ):
+        main([], vaults_root=tmp_path)
+    mock_reset.assert_called_once()
+    mock_refresh.assert_called_once()
+
+
+def test_startup_seed_local_vault_no_push(monkeypatch, tmp_path):
+    for k, v in _ENV.items():
+        monkeypatch.setenv(k, v)
+    vault_path = tmp_path / "test"
+    vault_path.mkdir()
+    with (
+        patch("obsidian_vault_mcp.__main__.git_sync.init_local_vault"),
+        patch("obsidian_vault_mcp.git_sync.commit_file"),
+        patch("obsidian_vault_mcp.git_sync.push") as mock_push,
+        patch("obsidian_vault_mcp.__main__.server.setup"),
+        patch("obsidian_vault_mcp.__main__.server.mcp.run"),
+    ):
+        main([], vaults_root=tmp_path)
+    mock_push.assert_not_called()

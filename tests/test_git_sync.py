@@ -6,6 +6,7 @@ from obsidian_vault_mcp.git_sync import (
     push,
     is_dirty,
     ahead_behind,
+    pull_rebase,
 )
 
 
@@ -127,3 +128,45 @@ def test_ahead_behind_zero(tmp_path):
     with patch("obsidian_vault_mcp.git_sync.subprocess.run", return_value=mock_result):
         result = ahead_behind(tmp_path)
         assert result == (0, 0)
+
+
+# --- 10.1 pull_rebase ---
+
+
+def test_pull_rebase_calls_git(tmp_path):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch(
+        "obsidian_vault_mcp.git_sync.subprocess.run", return_value=mock_result
+    ) as mock_run:
+        pull_rebase(tmp_path)
+    mock_run.assert_called_once_with(
+        ["git", "-C", str(tmp_path), "pull", "--rebase"],
+        capture_output=True,
+    )
+
+
+def test_pull_rebase_returns_clean_on_success(tmp_path):
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("obsidian_vault_mcp.git_sync.subprocess.run", return_value=mock_result):
+        result = pull_rebase(tmp_path)
+    assert result.conflict is False
+    assert result.files == []
+
+
+def test_pull_rebase_returns_conflict_with_paths(tmp_path):
+    responses = [
+        MagicMock(returncode=1),
+        MagicMock(returncode=0, stdout="AGENTS.md\nnotes/foo.md\n"),
+        MagicMock(returncode=0),
+    ]
+    it = iter(responses)
+    with patch(
+        "obsidian_vault_mcp.git_sync.subprocess.run",
+        side_effect=lambda *a, **k: next(it),
+    ):
+        result = pull_rebase(tmp_path)
+    assert result.conflict is True
+    assert "AGENTS.md" in result.files
+    assert "notes/foo.md" in result.files
