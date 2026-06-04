@@ -33,6 +33,7 @@ Write the failing test first, then write the minimum implementation to make it p
 | `frontmatter.py` | Real filesystem via `tmp_path` |
 | `vault.py` | Real filesystem via `tmp_path`; mock `git_sync` where needed |
 | `server.py` | Call tool functions directly as plain Python; mock `git_sync` where needed |
+| `conventions.py` | Real filesystem via `tmp_path`; mock `obsidian_vault_mcp.git_sync.commit_file` for the seed-commit path |
 
 ## FastMCP SDK import
 
@@ -46,6 +47,8 @@ The two diverged after FastMCP 1.0 was incorporated into the SDK in 2024. The st
 
 `mcp.run()` does not accept `host` or `port` kwargs — set them via `mcp.settings.host` and `mcp.settings.port` before calling `run()`. `test_sdk_contract.py` guards this.
 
+`mcp.instructions` is a read-only property backed by `mcp._mcp_server.instructions` (settable). To update instructions at runtime, assign to `mcp._mcp_server.instructions`.
+
 ## Vault types
 
 - `VAULT_<NAME>_REPO=<url>` — remote vault: `git clone`/`git pull --rebase` on startup, `git push` in `vault_sync`
@@ -58,6 +61,8 @@ The two diverged after FastMCP 1.0 was incorporated into the SDK in 2024. The st
 `server.py` uses module-level globals (`_vaults`, `_vault_configs`, `_default`). `server.setup()` resets all of them — call it in tests to configure state, then call tool functions as plain Python functions. The `mcp` singleton is created at import time.
 
 `main()` accepts `args: list[str] | None` and `vaults_root: Path` for testability.
+
+`conventions.py` has a module-level `_cache: dict[str, str]`. `tests/conftest.py` has an `autouse` fixture that clears it before/after every test. Populate it directly in tests via `conventions._cache["vault_name"] = "content"`.
 
 ## Known gaps (not yet implemented)
 

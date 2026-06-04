@@ -13,6 +13,7 @@ class VaultConfig:
 class ServerConfig:
     port: int
     ip: str
+    enforce_frontmatter: bool = True
 
 
 @dataclass
@@ -44,9 +45,13 @@ def load_config() -> Config:
                 "VAULT_DEFAULT must be set when multiple vaults are configured"
             )
 
+    _ef_raw = os.environ.get("ENFORCE_FRONTMATTER", "true").lower()
+    enforce_frontmatter = _ef_raw not in ("false", "0")
+
     server = ServerConfig(
         port=int(os.environ.get("SERVER_PORT", 8080)),
         ip=os.environ.get("SERVER_IP", "0.0.0.0"),
+        enforce_frontmatter=enforce_frontmatter,
     )
 
     return Config(vaults=vaults, default_vault=default, server=server)

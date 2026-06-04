@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from obsidian_vault_mcp import git_sync, server
+from obsidian_vault_mcp import conventions, git_sync, server
 from obsidian_vault_mcp.config import load_config
 
 
@@ -22,6 +22,7 @@ def main(args: list[str] | None = None, vaults_root: Path = Path("/vaults")) -> 
             git_sync.init_local_vault(vault_path)
         else:
             git_sync.init_vault(vault_path, vc.url)
+        conventions.load(vc.name, vault_path)
 
     server.setup(config, vaults_root=vaults_root)
 

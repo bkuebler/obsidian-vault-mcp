@@ -18,6 +18,9 @@ obsidian-vault-mcp = "obsidian_vault_mcp.__main__:main"
 where = ["."]
 include = ["obsidian_vault_mcp*"]
 
+[tool.setuptools.package-data]
+obsidian_vault_mcp = ["*.md"]
+
 [project.optional-dependencies]
 dev = [
     "pytest",

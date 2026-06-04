@@ -129,3 +129,33 @@ def test_server_ip_override(monkeypatch):
     monkeypatch.setenv("SERVER_IP", "127.0.0.1")
     config = load_config()
     assert config.server.ip == "127.0.0.1"
+
+
+# --- 9.1 ENFORCE_FRONTMATTER flag ---
+
+
+def test_enforce_frontmatter_default_true(monkeypatch):
+    monkeypatch.delenv("ENFORCE_FRONTMATTER", raising=False)
+    config = load_config()
+    assert config.server.enforce_frontmatter is True
+
+
+def test_enforce_frontmatter_false(monkeypatch):
+    monkeypatch.setenv("ENFORCE_FRONTMATTER", "false")
+    config = load_config()
+    assert config.server.enforce_frontmatter is False
+
+
+def test_enforce_frontmatter_true_explicit(monkeypatch):
+    monkeypatch.setenv("ENFORCE_FRONTMATTER", "true")
+    config = load_config()
+    assert config.server.enforce_frontmatter is True
+
+
+def test_enforce_frontmatter_case_insensitive(monkeypatch):
+    for val in ("False", "FALSE", "0"):
+        monkeypatch.setenv("ENFORCE_FRONTMATTER", val)
+        assert load_config().server.enforce_frontmatter is False
+    for val in ("True", "TRUE", "1"):
+        monkeypatch.setenv("ENFORCE_FRONTMATTER", val)
+        assert load_config().server.enforce_frontmatter is True

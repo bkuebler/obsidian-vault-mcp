@@ -1,7 +1,7 @@
 from unittest.mock import patch
 import pytest
 from obsidian_vault_mcp.config import Config, VaultConfig, ServerConfig
-from obsidian_vault_mcp import server
+from obsidian_vault_mcp import conventions, server
 
 
 # --- helpers ---
@@ -303,3 +303,172 @@ def test_tool_vault_sync_custom_message(personal_vault):
     ):
         server.vault_sync(message="my sync message")
     mock_commit.assert_called_once_with(personal_vault, "my sync message")
+
+
+# --- 8.4 vault_conventions tool ---
+
+
+def test_tool_vault_conventions_default_vault(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    conventions._cache["personal"] = "# Vault conventions"
+    result = server.vault_conventions()
+    assert "Vault conventions" in result
+
+
+def test_tool_vault_conventions_explicit_vault(two_vaults):
+    (two_vaults / "corporate").mkdir(parents=True, exist_ok=True)
+    conventions._cache["corporate"] = "# Corporate rules"
+    result = server.vault_conventions(vault="corporate")
+    assert "Corporate rules" in result
+
+
+def test_tool_vault_conventions_unknown_vault_returns_error(personal_vault):
+    result = server.vault_conventions(vault="nonexistent")
+    assert "error" in result.lower()
+
+
+# --- 8.5 update_conventions tool ---
+
+
+def test_tool_update_conventions_replaces_full_file(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("# Old content")
+    conventions._cache["personal"] = "# Old content"
+    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+        result = server.update_conventions(content="# New content")
+    assert (personal_vault / "AGENTS.md").read_text() == "# New content"
+    assert conventions._cache["personal"] == "# New content"
+    assert "ok" in result.lower()
+
+
+def test_tool_update_conventions_replaces_section(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    original = "## Frontmatter\nold\n\n## Other\nother"
+    (personal_vault / "AGENTS.md").write_text(original)
+    conventions._cache["personal"] = original
+    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+        server.update_conventions(content="new frontmatter", section="Frontmatter")
+    updated = (personal_vault / "AGENTS.md").read_text()
+    assert "new frontmatter" in updated
+    assert "## Other" in updated
+    assert "old" not in updated
+
+
+def test_tool_update_conventions_missing_section_creates_it(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    original = "# Title\n## Existing\ncontent"
+    (personal_vault / "AGENTS.md").write_text(original)
+    conventions._cache["personal"] = original
+    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+        server.update_conventions(content="brand new", section="NewSection")
+    updated = (personal_vault / "AGENTS.md").read_text()
+    assert "## NewSection" in updated
+    assert "brand new" in updated
+    assert "## Existing" in updated
+
+
+def test_tool_update_conventions_refuses_other_paths(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("old")
+    conventions._cache["personal"] = "old"
+    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+        server.update_conventions(content="new")
+    assert (personal_vault / "AGENTS.md").read_text() == "new"
+    md_files = [f for f in personal_vault.glob("*.md") if f.name != "AGENTS.md"]
+    assert md_files == []
+
+
+def test_tool_update_conventions_no_implicit_push(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("content")
+    conventions._cache["personal"] = "content"
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
+    ):
+        server.update_conventions(content="new content")
+    mock_commit.assert_called_once()
+    mock_push.assert_not_called()
+
+
+# --- 8.6.3 protected paths surface as MCP error responses ---
+
+
+def test_tool_note_create_protected_returns_error(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    result = server.note_create(path="AGENTS.md", content="hack")
+    assert "error" in result.lower() or "protected" in result.lower()
+
+
+def test_tool_note_read_protected_returns_error(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("content")
+    result = server.note_read(path="AGENTS.md")
+    assert "error" in result.lower() or "protected" in result.lower()
+
+
+def test_tool_note_update_protected_returns_error(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    result = server.note_update(path="AGENTS.md", content="hack")
+    assert "error" in result.lower() or "protected" in result.lower()
+
+
+def test_tool_note_delete_protected_returns_error(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("content")
+    result = server.note_delete(path="AGENTS.md")
+    assert "error" in result.lower() or "protected" in result.lower()
+
+
+# --- 8.9 initialize.instructions ---
+
+
+def test_initialize_instructions_contains_all_vault_conventions(tmp_path):
+    conventions._cache["personal"] = "personal rules"
+    conventions._cache["corporate"] = "corporate rules"
+    config = _make_config(
+        {
+            "personal": "https://ghp_x@github.com/u/p.git",
+            "corporate": "https://ghp_y@github.com/o/c.git",
+        },
+        default="personal",
+    )
+    server.setup(config, vaults_root=tmp_path)
+    assert "## Vault: personal" in server.mcp.instructions
+    assert "personal rules" in server.mcp.instructions
+    assert "## Vault: corporate" in server.mcp.instructions
+    assert "corporate rules" in server.mcp.instructions
+
+
+def test_initialize_instructions_updated_after_update_conventions(tmp_path):
+    (tmp_path / "personal").mkdir()
+    (tmp_path / "personal" / "AGENTS.md").write_text("old instructions")
+    conventions._cache["personal"] = "old instructions"
+    config = _make_config({"personal": "https://ghp_x@github.com/u/p.git"})
+    server.setup(config, vaults_root=tmp_path)
+    assert "old instructions" in server.mcp.instructions
+
+    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+        server.update_conventions(content="new instructions")
+    assert "new instructions" in server.mcp.instructions
+
+
+# --- 9.4 enforce_frontmatter wired through server ---
+
+
+def test_server_passes_enforce_flag_to_vault(tmp_path):
+    config = Config(
+        vaults=[
+            VaultConfig(
+                name="personal", url="https://ghp_x@github.com/u/p.git", is_local=False
+            )
+        ],
+        default_vault="personal",
+        server=ServerConfig(port=8080, ip="0.0.0.0", enforce_frontmatter=False),
+    )
+    server.setup(config, vaults_root=tmp_path)
+    (tmp_path / "personal").mkdir()
+    server.note_create(path="note.md", content="body")
+    content = (tmp_path / "personal" / "note.md").read_text()
+    assert "title:" not in content
+    assert "created:" not in content
