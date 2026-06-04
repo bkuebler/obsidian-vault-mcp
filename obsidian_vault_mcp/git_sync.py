@@ -1,8 +1,15 @@
 import re
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _ALLOWED_URL = re.compile(r"^(https?|ssh|git)://")
+
+
+@dataclass
+class PullResult:
+    conflict: bool
+    files: list[str] = field(default_factory=list)
 
 
 def _validate_url(url: str) -> None:
@@ -47,6 +54,28 @@ def is_dirty(path: Path) -> bool:
         text=True,
     )
     return bool(result.stdout.strip())
+
+
+def pull_rebase(path: Path) -> PullResult:
+    result = subprocess.run(
+        ["git", "-C", str(path), "pull", "--rebase"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return PullResult(conflict=False, files=[])
+    unmerged = subprocess.run(
+        ["git", "-C", str(path), "diff", "--name-only", "--diff-filter=U"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    files = [f for f in unmerged.stdout.strip().splitlines() if f]
+    subprocess.run(["git", "-C", str(path), "rebase", "--abort"], check=True)
+    return PullResult(conflict=True, files=files)
+
+
+def reset_hard(path: Path, ref: str = "origin/HEAD") -> None:
+    subprocess.run(["git", "-C", str(path), "reset", "--hard", ref], check=True)
 
 
 def ahead_behind(path: Path) -> tuple[int, int]:

@@ -523,16 +523,16 @@ This phase supersedes the no-push behaviour of **8.5** (`update_conventions` use
 
 ### 10.1 `git_sync.pull_rebase` helper
 
-- [ ] **10.1.1 RED** Add to `tests/test_git_sync.py`:
+- [x] **10.1.1 RED** Add to `tests/test_git_sync.py`:
   - `test_pull_rebase_calls_git` — calls `git -C <path> pull --rebase`
   - `test_pull_rebase_returns_clean_on_success` — `subprocess.run` returns 0 → returns a "clean" marker (e.g. `PullResult(conflict=False, files=[])`)
   - `test_pull_rebase_returns_conflict_with_paths` — rebase exits non-zero and `git diff --name-only --diff-filter=U` returns two paths → returns `PullResult(conflict=True, files=[<paths>])` and the helper has called `git rebase --abort` to leave the tree clean
 
-- [ ] **10.1.2 GREEN** Implement `pull_rebase(path) -> PullResult` in `git_sync.py`. On non-zero exit, query unmerged paths, run `git rebase --abort`, return the conflict result. Do not raise — callers handle the result.
+- [x] **10.1.2 GREEN** Implement `pull_rebase(path) -> PullResult` in `git_sync.py`. On non-zero exit, query unmerged paths, run `git rebase --abort`, return the conflict result. Do not raise — callers handle the result.
 
 ### 10.2 `vault_sync` pull-rebase + AGENTS.md cache refresh
 
-- [ ] **10.2.1 RED** Extend `tests/test_server.py` (mock `git_sync.pull_rebase` and `git_sync.push`):
+- [x] **10.2.1 RED** Extend `tests/test_server.py` (mock `git_sync.pull_rebase` and `git_sync.push`):
   - `test_vault_sync_pulls_before_push_remote` — remote vault, dirty tree → commit, pull-rebase, push, in that order
   - `test_vault_sync_skips_pull_for_local` — local vault → no pull-rebase call
   - `test_vault_sync_rebase_conflict_aborts_and_reports` — pull-rebase returns conflict → push **not** called; response message contains `"rebase conflict"` and the conflicting paths; tool returns a typed error, not an unhandled exception
@@ -540,32 +540,32 @@ This phase supersedes the no-push behaviour of **8.5** (`update_conventions` use
   - `test_vault_sync_no_refresh_when_agents_md_unchanged` — pull-rebase brings down notes only → `conventions.refresh()` not called
   - `test_vault_sync_status_messages_post_rebase` — update the existing status-message assertions to reflect the new step (`"committed and pushed"`, `"nothing to commit, pushed 1 existing commit after rebase"`, `"nothing to commit or push"`, `"committed (local only)"`, `"rebase conflict: <paths>"`)
 
-- [ ] **10.2.2 GREEN** Update `vault_sync` tool in `server.py`: after commit (if any), call `pull_rebase` for remote vaults, branch on result, refresh conventions when needed, then push.
+- [x] **10.2.2 GREEN** Update `vault_sync` tool in `server.py`: after commit (if any), call `pull_rebase` for remote vaults, branch on result, refresh conventions when needed, then push.
 
 ### 10.3 `update_conventions` pushes immediately
 
-- [ ] **10.3.1 RED** Update `tests/test_server.py`. Replace the old `test_tool_update_conventions_no_implicit_push` with the inverse behaviour, and add the rebase-conflict path:
+- [x] **10.3.1 RED** Update `tests/test_server.py`. Replace the old `test_tool_update_conventions_no_implicit_push` with the inverse behaviour, and add the rebase-conflict path:
   - `test_tool_update_conventions_pushes_immediately_remote` — remote vault → commit, pull-rebase, push, all within the single tool call
   - `test_tool_update_conventions_skips_push_for_local` — local vault → commit only, no pull/push
   - `test_tool_update_conventions_rebase_conflict_aborts` — pull-rebase returns conflict on `AGENTS.md` → push not called; cache refreshed from the (now-current) remote state; response indicates `"conventions diverged — re-read with vault_conventions and reapply"`
   - `test_tool_update_conventions_cache_refreshed_after_success` — successful push → cache holds the just-pushed content
   - **Remove** the obsolete assertion that push is *not* called for remote vaults
 
-- [ ] **10.3.2 GREEN** Update `update_conventions` tool in `server.py`: after commit, for remote vaults call `pull_rebase`, branch on result (abort + refresh + error response on conflict; otherwise push + refresh).
+- [x] **10.3.2 GREEN** Update `update_conventions` tool in `server.py`: after commit, for remote vaults call `pull_rebase`, branch on result (abort + refresh + error response on conflict; otherwise push + refresh).
 
 ### 10.4 Startup seeding race
 
-- [ ] **10.4.1 RED** Add to `tests/test_main.py` (or `tests/test_conventions.py`, wherever the startup seed currently lives):
+- [x] **10.4.1 RED** Add to `tests/test_main.py` (or `tests/test_conventions.py`, wherever the startup seed currently lives):
   - `test_startup_seed_after_pull_not_before` — verify call order: clone/pull first, then check for AGENTS.md, then seed if missing. Mock `git_sync` to assert ordering
   - `test_startup_seed_pushes_immediately_remote` — remote vault, no remote AGENTS.md → after startup, push has been called for the seed commit
   - `test_startup_seed_handles_lost_race` — simulate push rejection on seed (mock `push` to raise non-fast-forward) → server runs `git reset --hard origin/<branch>`, re-loads `AGENTS.md` from the now-current remote, cache reflects the **remote** content, not the local default template
   - `test_startup_seed_local_vault_no_push` — local vault → seed commit only, no push attempt
 
-- [ ] **10.4.2 GREEN** Update the startup seeding step (in `conventions.py` or `__main__.py`, wherever it lives) to: pull/clone first, then check AGENTS.md, then on missing → seed + commit + (remote only) pull-rebase + push, with the reset-hard fallback on push rejection.
+- [x] **10.4.2 GREEN** Update the startup seeding step (in `conventions.py` or `__main__.py`, wherever it lives) to: pull/clone first, then check AGENTS.md, then on missing → seed + commit + (remote only) pull-rebase + push, with the reset-hard fallback on push rejection.
 
 ### 10.5 SPEC alignment check
 
-- [ ] **10.5.1** Manual: re-read SPEC.md sections `## Convention Authority: AGENTS.md` (Load order on startup), `### vault_sync behaviour`, `### update_conventions behaviour`. Confirm the implemented behaviour matches: pull-rebase ordering, conflict abort + error response, cache refresh after pull, immediate push for `update_conventions`, seed-after-pull with reset-hard fallback.
+- [x] **10.5.1** Manual: re-read SPEC.md sections `## Convention Authority: AGENTS.md` (Load order on startup), `### vault_sync behaviour`, `### update_conventions behaviour`. Confirm the implemented behaviour matches: pull-rebase ordering, conflict abort + error response, cache refresh after pull, immediate push for `update_conventions`, seed-after-pull with reset-hard fallback.
 
 ---
 

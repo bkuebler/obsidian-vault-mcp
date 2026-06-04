@@ -1,4 +1,5 @@
 import argparse
+import subprocess
 from pathlib import Path
 
 from obsidian_vault_mcp import conventions, git_sync, server
@@ -22,7 +23,15 @@ def main(args: list[str] | None = None, vaults_root: Path = Path("/vaults")) -> 
             git_sync.init_local_vault(vault_path)
         else:
             git_sync.init_vault(vault_path, vc.url)
+        was_missing = not (vault_path / "AGENTS.md").exists()
         conventions.load(vc.name, vault_path)
+        was_seeded = was_missing and (vault_path / "AGENTS.md").exists()
+        if was_seeded and not vc.is_local:
+            try:
+                git_sync.push(vault_path)
+            except subprocess.CalledProcessError:
+                git_sync.reset_hard(vault_path)
+                conventions.refresh(vc.name, vault_path)
 
     server.setup(config, vaults_root=vaults_root)
 

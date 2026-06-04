@@ -2,6 +2,7 @@ from unittest.mock import patch
 import pytest
 from obsidian_vault_mcp.config import Config, VaultConfig, ServerConfig
 from obsidian_vault_mcp import conventions, server
+from obsidian_vault_mcp.git_sync import PullResult
 
 
 # --- helpers ---
@@ -232,6 +233,10 @@ def test_tool_vault_sync_dirty_remote(personal_vault):
     with (
         patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=True),
         patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
         patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(1, 0)),
         patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
     ):
@@ -246,13 +251,17 @@ def test_tool_vault_sync_clean_remote_with_unpushed(personal_vault):
     with (
         patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=False),
         patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
         patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(1, 0)),
         patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
     ):
         result = server.vault_sync()
     mock_commit.assert_not_called()
     mock_push.assert_called_once()
-    assert result == "nothing to commit, pushed 1 existing commit"
+    assert result == "nothing to commit, pushed 1 existing commit after rebase"
 
 
 def test_tool_vault_sync_nothing_to_do_remote(personal_vault):
@@ -260,6 +269,10 @@ def test_tool_vault_sync_nothing_to_do_remote(personal_vault):
     with (
         patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=False),
         patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
         patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(0, 0)),
         patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
     ):
@@ -298,11 +311,105 @@ def test_tool_vault_sync_custom_message(personal_vault):
     with (
         patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=True),
         patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
         patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(1, 0)),
         patch("obsidian_vault_mcp.server.git_sync.push"),
     ):
         server.vault_sync(message="my sync message")
     mock_commit.assert_called_once_with(personal_vault, "my sync message")
+
+
+# --- 10.2 vault_sync pull-rebase ---
+
+
+def test_vault_sync_pulls_before_push_remote(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    call_order = []
+
+    def track_commit(*a, **k):
+        call_order.append("commit")
+
+    def track_pull(*a, **k):
+        call_order.append("pull_rebase")
+        return PullResult(conflict=False, files=[])
+
+    def track_push(*a, **k):
+        call_order.append("push")
+
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=True),
+        patch("obsidian_vault_mcp.server.git_sync.commit", side_effect=track_commit),
+        patch("obsidian_vault_mcp.server.git_sync.pull_rebase", side_effect=track_pull),
+        patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(1, 0)),
+        patch("obsidian_vault_mcp.server.git_sync.push", side_effect=track_push),
+    ):
+        server.vault_sync()
+    assert call_order == ["commit", "pull_rebase", "push"]
+
+
+def test_vault_sync_skips_pull_for_local(local_vault):
+    local_vault.mkdir(parents=True, exist_ok=True)
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=True),
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch("obsidian_vault_mcp.server.git_sync.pull_rebase") as mock_pull,
+    ):
+        server.vault_sync()
+    mock_pull.assert_not_called()
+
+
+def test_vault_sync_rebase_conflict_aborts_and_reports(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=True),
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=True, files=["notes/foo.md", "AGENTS.md"]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
+    ):
+        result = server.vault_sync()
+    mock_push.assert_not_called()
+    assert "rebase conflict" in result
+    assert "AGENTS.md" in result or "notes/foo.md" in result
+
+
+def test_vault_sync_refreshes_conventions_when_agents_md_changed(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("new content from remote")
+    conventions._cache["personal"] = "old cached content"
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=False),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(0, 0)),
+        patch("obsidian_vault_mcp.server.conventions.refresh") as mock_refresh,
+    ):
+        server.vault_sync()
+    mock_refresh.assert_called_once_with("personal", personal_vault)
+
+
+def test_vault_sync_no_refresh_when_agents_md_unchanged(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("same content")
+    conventions._cache["personal"] = "same content"
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.is_dirty", return_value=False),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.ahead_behind", return_value=(0, 0)),
+        patch("obsidian_vault_mcp.server.conventions.refresh") as mock_refresh,
+    ):
+        server.vault_sync()
+    mock_refresh.assert_not_called()
 
 
 # --- 8.4 vault_conventions tool ---
@@ -334,11 +441,18 @@ def test_tool_update_conventions_replaces_full_file(personal_vault):
     personal_vault.mkdir(parents=True, exist_ok=True)
     (personal_vault / "AGENTS.md").write_text("# Old content")
     conventions._cache["personal"] = "# Old content"
-    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
         result = server.update_conventions(content="# New content")
     assert (personal_vault / "AGENTS.md").read_text() == "# New content"
     assert conventions._cache["personal"] == "# New content"
-    assert "ok" in result.lower()
+    assert "conventions updated" in result
 
 
 def test_tool_update_conventions_replaces_section(personal_vault):
@@ -346,7 +460,14 @@ def test_tool_update_conventions_replaces_section(personal_vault):
     original = "## Frontmatter\nold\n\n## Other\nother"
     (personal_vault / "AGENTS.md").write_text(original)
     conventions._cache["personal"] = original
-    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
         server.update_conventions(content="new frontmatter", section="Frontmatter")
     updated = (personal_vault / "AGENTS.md").read_text()
     assert "new frontmatter" in updated
@@ -359,7 +480,14 @@ def test_tool_update_conventions_missing_section_creates_it(personal_vault):
     original = "# Title\n## Existing\ncontent"
     (personal_vault / "AGENTS.md").write_text(original)
     conventions._cache["personal"] = original
-    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
         server.update_conventions(content="brand new", section="NewSection")
     updated = (personal_vault / "AGENTS.md").read_text()
     assert "## NewSection" in updated
@@ -371,24 +499,99 @@ def test_tool_update_conventions_refuses_other_paths(personal_vault):
     personal_vault.mkdir(parents=True, exist_ok=True)
     (personal_vault / "AGENTS.md").write_text("old")
     conventions._cache["personal"] = "old"
-    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
         server.update_conventions(content="new")
     assert (personal_vault / "AGENTS.md").read_text() == "new"
     md_files = [f for f in personal_vault.glob("*.md") if f.name != "AGENTS.md"]
     assert md_files == []
 
 
-def test_tool_update_conventions_no_implicit_push(personal_vault):
+def test_tool_update_conventions_pushes_immediately_remote(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("old")
+    conventions._cache["personal"] = "old"
+    call_order = []
+
+    def track_commit(*a, **k):
+        call_order.append("commit")
+
+    def track_pull(*a, **k):
+        call_order.append("pull")
+        return PullResult(conflict=False, files=[])
+
+    def track_push(*a, **k):
+        call_order.append("push")
+
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit", side_effect=track_commit),
+        patch("obsidian_vault_mcp.server.git_sync.pull_rebase", side_effect=track_pull),
+        patch("obsidian_vault_mcp.server.git_sync.push", side_effect=track_push),
+    ):
+        result = server.update_conventions(content="new")
+    assert "commit" in call_order
+    assert "pull" in call_order
+    assert "push" in call_order
+    assert (
+        call_order.index("commit") < call_order.index("pull") < call_order.index("push")
+    )
+    assert "conventions updated" in result
+
+
+def test_tool_update_conventions_skips_push_for_local(local_vault):
+    local_vault.mkdir(parents=True, exist_ok=True)
+    (local_vault / "AGENTS.md").write_text("old")
+    conventions._cache["notes"] = "old"
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch("obsidian_vault_mcp.server.git_sync.pull_rebase") as mock_pull,
+        patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
+    ):
+        result = server.update_conventions(content="new", vault="notes")
+    mock_pull.assert_not_called()
+    mock_push.assert_not_called()
+    assert "local only" in result
+
+
+def test_tool_update_conventions_rebase_conflict_aborts(personal_vault):
     personal_vault.mkdir(parents=True, exist_ok=True)
     (personal_vault / "AGENTS.md").write_text("content")
     conventions._cache["personal"] = "content"
     with (
-        patch("obsidian_vault_mcp.server.git_sync.commit") as mock_commit,
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=True, files=["AGENTS.md"]),
+        ),
         patch("obsidian_vault_mcp.server.git_sync.push") as mock_push,
+        patch("obsidian_vault_mcp.server.conventions.refresh") as mock_refresh,
     ):
-        server.update_conventions(content="new content")
-    mock_commit.assert_called_once()
+        result = server.update_conventions(content="new")
     mock_push.assert_not_called()
+    mock_refresh.assert_called_once()
+    assert "conventions diverged" in result
+
+
+def test_tool_update_conventions_cache_refreshed_after_success(personal_vault):
+    personal_vault.mkdir(parents=True, exist_ok=True)
+    (personal_vault / "AGENTS.md").write_text("old content")
+    conventions._cache["personal"] = "old content"
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
+        server.update_conventions(content="pushed content")
+    assert conventions._cache.get("personal") == "pushed content"
 
 
 # --- 8.6.3 protected paths surface as MCP error responses ---
@@ -448,7 +651,14 @@ def test_initialize_instructions_updated_after_update_conventions(tmp_path):
     server.setup(config, vaults_root=tmp_path)
     assert "old instructions" in server.mcp.instructions
 
-    with patch("obsidian_vault_mcp.server.git_sync.commit"):
+    with (
+        patch("obsidian_vault_mcp.server.git_sync.commit"),
+        patch(
+            "obsidian_vault_mcp.server.git_sync.pull_rebase",
+            return_value=PullResult(conflict=False, files=[]),
+        ),
+        patch("obsidian_vault_mcp.server.git_sync.push"),
+    ):
         server.update_conventions(content="new instructions")
     assert "new instructions" in server.mcp.instructions
 
