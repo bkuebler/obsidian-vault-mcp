@@ -76,13 +76,16 @@ more about content shape.
 For each configured vault, after the clone/pull/init step:
 
 1. If `<vault>/AGENTS.md` **exists** → read and cache its content
-2. If **missing** → the server writes the bundled default template
-   (`obsidian_vault_mcp/default_AGENTS.md`) to `<vault>/AGENTS.md`, then caches it.
-   The seed file is staged and committed (`chore: seed AGENTS.md`) but **not**
-   pushed automatically — push happens on the next `vault_sync` call
+2. If **missing** *after* the clone/pull step → the server writes the bundled
+   default template (`obsidian_vault_mcp/default_AGENTS.md`) to
+   `<vault>/AGENTS.md`, commits (`chore: seed AGENTS.md`), and for remote vaults
+   pulls + pushes immediately. If push is rejected (another instance seeded
+   first in parallel), the local seed commit is discarded
+   (`git reset --hard origin/<branch>`) and the remote `AGENTS.md` is cached
+   instead. This closes the first-boot race between concurrent server instances
 
 The cache is refreshed when `update_conventions` is called, and re-read after
-every `vault_sync` pull (in case another machine updated it).
+every `vault_sync` pull-rebase step (in case another machine updated `AGENTS.md`).
 
 ### Surfacing to agents
 
@@ -144,8 +147,11 @@ On container start, before the MCP server begins accepting connections:
    - **Local vault** (`VAULT_*_REPO=local`):
      - If `/vaults/<name>/` does not exist → `git init /vaults/<name>/`
      - If `/vaults/<name>/` exists → no-op
-   - If `<vault>/AGENTS.md` is missing → write `default_AGENTS.md`, stage and
-     commit (`chore: seed AGENTS.md`); push deferred to next `vault_sync`
+   - Re-check `<vault>/AGENTS.md` **after** the clone/pull/init step. If still
+     missing → write `default_AGENTS.md`, stage and commit (`chore: seed AGENTS.md`),
+     then for remote vaults `git pull --rebase && git push` immediately so the
+     seed is durable. If the push is rejected (another instance seeded first),
+     `git reset --hard origin/<branch>` to drop the local seed and accept theirs
    - Load `AGENTS.md` into per-vault convention cache
 2. Build the `initialize.instructions` payload by concatenating all per-vault
    conventions under labelled headings
@@ -173,14 +179,39 @@ Traefik proxies it transparently — no label changes required.
 | --- | --- | --- |
 | `vault_list` | — | List configured vaults + dirty flag and ahead/behind remote counts for each (remote vaults only; local vaults show dirty flag only) |
 | `vault_conventions` | `vault?` | Return cached `AGENTS.md` content for that vault |
-| `update_conventions` | `vault?, content, section?` | Replace `AGENTS.md` (or one `## heading` section) at vault root; refreshes cache; refuses any other path |
+| `update_conventions` | `vault?, content, section?` | Replace `AGENTS.md` (or one `## heading` section) at vault root; commit + `pull --rebase` + push immediately (not deferred to `vault_sync`); refreshes cache; refuses any other path |
 | `note_create` | `vault?, path, content, tags?` | Write note with frontmatter; path relative to vault root; refuses `AGENTS.md` / `CLAUDE.md` at root |
 | `note_read` | `vault?, path` | Return frontmatter + body separately; refuses protected files |
 | `note_update` | `vault?, path, content?, append?, tags?` | Replace or append content; refuses protected files |
 | `note_delete` | `vault?, path` | Delete note; refuses protected files |
 | `note_list` | `vault?, folder?` | List `.md` files under folder (or root); excludes `AGENTS.md` / `CLAUDE.md` from results |
 | `note_search` | `vault?, query, tags?, folder?` | Case-insensitive grep across content + frontmatter; filter by tags |
-| `vault_sync` | `vault?, message?` | Commit if changes exist, then push; returns status message |
+| `vault_sync` | `vault?, message?` | Commit if changes exist, `pull --rebase`, then push; returns status message |
+
+### update_conventions behaviour
+
+`update_conventions` mutates `AGENTS.md` at vault root and syncs to the remote
+immediately — it does **not** defer the push to `vault_sync`. This gives the
+agent direct feedback on whether the change landed.
+
+1. Resolve target: full file replace if only `content` is provided; in-place
+   replacement of a single `## heading` section if `section` is given (section
+   appended at end if it does not exist)
+2. Write `AGENTS.md` to disk
+3. `git add AGENTS.md && git commit -m "conventions: <summary>"`
+4. For remote vaults: `git pull --rebase`
+5. On rebase conflict in `AGENTS.md` (the only file this tool writes):
+   - Abort the rebase
+   - Refresh the convention cache from the now-current remote state
+   - Return an error: `"conventions diverged — re-read with vault_conventions and reapply"`
+   - **Do not push**
+   The agent's next move is to call `vault_conventions(vault)`, recompute its
+   edit against the new base, and call `update_conventions` again
+6. For remote vaults: `git push`
+7. Refresh the convention cache from the local file (it now reflects what was
+   pushed)
+8. Return success: `"conventions updated and pushed"` or
+   `"conventions updated (local only)"` for local vaults
 
 ### note_update behaviour
 
@@ -199,12 +230,25 @@ root). Tag filter is applied as a post-filter on the matched files' frontmatter.
 ### vault_sync behaviour
 
 1. If working tree is dirty: `git add -A && git commit -m <message>`
-2. For remote vaults: `git push` (runs regardless of whether a new commit was
+2. For remote vaults: `git pull --rebase` — pulls remote changes and replays
+   any local commits on top
+   For local vaults: pull step is skipped
+3. If the rebase produces a conflict:
+   - Abort the rebase (`git rebase --abort`) so the working tree is left clean
+     on the pre-rebase commit
+   - Return an error response listing the conflicting paths and a hint that the
+     agent should re-read those files (`note_read` for notes; `vault_conventions`
+     if `AGENTS.md` is among them) and reapply its changes
+   - **Do not push**
+4. For remote vaults: `git push` (runs regardless of whether a new commit was
    made, to push any previously committed but unpushed changes)
    For local vaults: push step is skipped
-3. Returns a status message indicating what was done (e.g. `"committed and pushed"`,
-   `"nothing to commit, pushed 1 existing commit"`, `"nothing to commit or push"`,
-   `"committed (local only)"`)
+5. After a successful pull, if `AGENTS.md` content changed, refresh the
+   convention cache for this vault
+6. Returns a status message indicating what was done (e.g. `"committed and pushed"`,
+   `"nothing to commit, pushed 1 existing commit after rebase"`,
+   `"nothing to commit or push"`, `"committed (local only)"`,
+   `"rebase conflict: <paths>"`)
 
 ## Frontmatter format
 
