@@ -5,10 +5,13 @@ from urllib.parse import unquote
 
 from obsidian_vault_mcp import frontmatter as fm
 
+PROTECTED_ROOT_FILES = {"AGENTS.md", "CLAUDE.md"}
+
 
 class Vault:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, enforce_frontmatter: bool = True) -> None:
         self.root = root.resolve()
+        self.enforce_frontmatter = enforce_frontmatter
 
     def resolve(self, path: str) -> Path:
         decoded = unquote(path)
@@ -19,15 +22,24 @@ class Vault:
             raise ValueError(f"Path traversal detected: {path!r}")
         return resolved
 
+    def _assert_not_protected(self, resolved: Path) -> None:
+        if resolved.parent == self.root and resolved.name in PROTECTED_ROOT_FILES:
+            raise PermissionError(f"Protected file: {resolved.name!r}")
+
     def note_create(
         self, path: str, content: str, tags: list[str] | None = None
     ) -> None:
         target = self.resolve(path)
-        metadata = fm.build_metadata(target, tags=tags)
+        self._assert_not_protected(target)
+        if self.enforce_frontmatter:
+            metadata = fm.build_metadata(target, tags=tags)
+        else:
+            metadata = {"tags": tags} if tags else {}
         fm.write(target, metadata, content)
 
     def note_read(self, path: str) -> tuple[dict, str]:
         target = self.resolve(path)
+        self._assert_not_protected(target)
         if not target.exists():
             raise FileNotFoundError(f"Note not found: {path!r}")
         return fm.read(target)
@@ -46,12 +58,14 @@ class Vault:
             body = f"{body}\n{content}" if append else content
         if tags is not None:
             metadata["tags"] = fm.merge_tags(metadata.get("tags", []), tags)
-        metadata["modified"] = datetime.date.today()
+        if self.enforce_frontmatter:
+            metadata["modified"] = datetime.date.today()
         target = self.resolve(path)
         fm.write(target, metadata, body)
 
     def note_delete(self, path: str) -> None:
         target = self.resolve(path)
+        self._assert_not_protected(target)
         if not target.exists():
             raise FileNotFoundError(f"Note not found: {path!r}")
         target.unlink()
@@ -60,6 +74,8 @@ class Vault:
         base = self.resolve(folder) if folder else self.root
         entries = []
         for md_file in sorted(base.rglob("*.md")):
+            if md_file.parent == self.root and md_file.name in PROTECTED_ROOT_FILES:
+                continue
             metadata, _ = fm.read(md_file)
             rel = md_file.relative_to(self.root)
             entries.append(

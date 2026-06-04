@@ -30,6 +30,11 @@ def commit(path: Path, message: str | None = None) -> None:
     subprocess.run(["git", "-C", str(path), "commit", "-m", message], check=True)
 
 
+def commit_file(path: Path, filename: str, message: str) -> None:
+    subprocess.run(["git", "-C", str(path), "add", filename], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-m", message], check=True)
+
+
 def push(path: Path) -> None:
     subprocess.run(["git", "-C", str(path), "push"], check=True)
 

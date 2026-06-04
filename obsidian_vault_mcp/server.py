@@ -2,7 +2,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from obsidian_vault_mcp import git_sync
+from obsidian_vault_mcp import conventions, git_sync
 from obsidian_vault_mcp.config import Config, VaultConfig
 from obsidian_vault_mcp.vault import Vault
 
@@ -19,10 +19,25 @@ def setup(config: Config, vaults_root: Path = Path("/vaults")) -> None:
     _vault_configs = {}
     _default = config.default_vault
     for vc in config.vaults:
-        _vaults[vc.name] = Vault(vaults_root / vc.name)
+        _vaults[vc.name] = Vault(
+            vaults_root / vc.name,
+            enforce_frontmatter=config.server.enforce_frontmatter,
+        )
         _vault_configs[vc.name] = vc
     mcp.settings.host = config.server.ip
     mcp.settings.port = config.server.port
+    _rebuild_instructions()
+
+
+def _rebuild_instructions() -> None:
+    sections = []
+    for name in _vaults:
+        try:
+            content = conventions.get(name)
+            sections.append(f"## Vault: {name}\n{content}")
+        except KeyError:
+            pass
+    mcp._mcp_server.instructions = "\n\n".join(sections)
 
 
 def _get_vault(name: str | None) -> Vault:
@@ -47,14 +62,54 @@ def vault_list() -> list[dict]:
 
 
 @mcp.tool()
+def vault_conventions(vault: str | None = None) -> str:
+    try:
+        vault_name = vault or _default
+        if vault_name not in _vaults:
+            return f"error: unknown vault {vault_name!r}"
+        return conventions.get(vault_name)
+    except KeyError:
+        return f"error: no conventions loaded for vault {vault_name!r}"
+
+
+@mcp.tool()
+def update_conventions(
+    content: str,
+    vault: str | None = None,
+    section: str | None = None,
+) -> str:
+    try:
+        vault_name = vault or _default
+        vault_obj = _get_vault(vault_name)
+        agents_md = vault_obj.root / "AGENTS.md"
+        if section is not None:
+            current = (
+                agents_md.read_text(encoding="utf-8") if agents_md.exists() else ""
+            )
+            new_text = conventions.replace_section(current, section, content)
+        else:
+            new_text = content
+        agents_md.write_text(new_text, encoding="utf-8")
+        conventions.refresh(vault_name, vault_obj.root)
+        git_sync.commit(vault_obj.root, "chore: update conventions")
+        _rebuild_instructions()
+        return "ok"
+    except (ValueError, OSError) as e:
+        return f"error: {e}"
+
+
+@mcp.tool()
 def note_create(
     path: str,
     content: str,
     vault: str | None = None,
     tags: list[str] | None = None,
 ) -> str:
-    _get_vault(vault).note_create(path, content, tags=tags)
-    return "ok"
+    try:
+        _get_vault(vault).note_create(path, content, tags=tags)
+        return "ok"
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 @mcp.tool()
@@ -62,7 +117,7 @@ def note_read(path: str, vault: str | None = None) -> str:
     try:
         metadata, body = _get_vault(vault).note_read(path)
         return f"---\n{_format_metadata(metadata)}\n---\n{body}"
-    except FileNotFoundError as e:
+    except (FileNotFoundError, PermissionError) as e:
         return f"error: {e}"
 
 
@@ -77,7 +132,7 @@ def note_update(
     try:
         _get_vault(vault).note_update(path, content=content, append=append, tags=tags)
         return "ok"
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, FileNotFoundError, PermissionError) as e:
         return f"error: {e}"
 
 
@@ -86,7 +141,7 @@ def note_delete(path: str, vault: str | None = None) -> str:
     try:
         _get_vault(vault).note_delete(path)
         return "ok"
-    except FileNotFoundError as e:
+    except (FileNotFoundError, PermissionError) as e:
         return f"error: {e}"
 
 

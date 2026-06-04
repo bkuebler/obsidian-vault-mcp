@@ -363,3 +363,152 @@ Use FastMCP's in-process test client. Mock `git_sync` functions. Each test group
 - [x] **7.3** Verify `docker build` completes without error — run manually: `docker build -t obsidian-vault-mcp:dev .`
 
 - [x] **7.4** Smoke test — run manually: `docker run --rm -e VAULT_TEST_REPO=local -e VAULT_DEFAULT=test obsidian-vault-mcp:dev --transport stdio`
+
+---
+
+## Phase 8 — Convention authority (`AGENTS.md`)
+
+The vault is self-describing: each vault carries an `AGENTS.md` at its root. The server seeds a default if missing, loads it on startup, returns it via MCP `initialize.serverInfo.instructions`, exposes it via `vault_conventions`, and allows mutation only via `update_conventions`. `note_*` tools refuse to touch `AGENTS.md` / `CLAUDE.md` at vault root.
+
+### 8.1 Bundle the default template
+
+- [x] **8.1.1** Confirm `obsidian_vault_mcp/default_AGENTS.md` exists in the package (already added). Ensure `pyproject.toml` includes it as package data so it ships in the wheel and is readable via `importlib.resources`.
+
+### 8.2 `conventions.py` — module
+
+Create a new module. All tests use `tmp_path` (real filesystem).
+
+- [x] **8.2.1 RED** Write `tests/test_conventions.py`:
+  - `test_load_returns_existing_agents_md` — `<vault>/AGENTS.md` exists with content → returned as-is
+  - `test_load_seeds_default_when_missing` — `AGENTS.md` absent → file is created with `default_AGENTS.md` content, returned
+  - `test_seeded_file_is_committed` — after seeding, `git status` shows the file as committed (mock `subprocess.run`, assert `git add AGENTS.md` + `git commit` were called; push **not** called)
+
+- [x] **8.2.2 GREEN** Implement `conventions.load(vault_path)` returning the concatenated string and seeding `AGENTS.md` from `importlib.resources` if missing. Use `git_sync.commit()` for the seed commit; do not push.
+
+### 8.3 In-memory cache + refresh
+
+- [x] **8.3.1 RED** Add tests:
+  - `test_cache_returns_same_content_on_repeated_calls` — `load` then `get` returns cached value without re-reading disk
+  - `test_refresh_rereads_from_disk` — edit file out-of-band, call `refresh(vault_path)` → cache reflects new content
+  - `test_per_vault_cache_isolation` — two vaults → caches do not bleed into each other
+
+- [x] **8.3.2 GREEN** Implement a per-vault cache keyed by vault name (dict in `conventions.py`). Expose `get(vault_name)`, `refresh(vault_name, vault_path)`.
+
+### 8.4 `vault_conventions` MCP tool
+
+- [x] **8.4.1 RED** Add to `tests/test_server.py`:
+  - `test_tool_vault_conventions_default_vault` — no `vault` param → returns default vault's conventions
+  - `test_tool_vault_conventions_explicit_vault` — `vault` param → returns that vault's conventions
+  - `test_tool_vault_conventions_unknown_vault_returns_error` — bad vault name → error response
+
+- [x] **8.4.2 GREEN** Add `vault_conventions(vault?)` tool calling `conventions.get(...)`.
+
+### 8.5 `update_conventions` MCP tool
+
+- [x] **8.5.1 RED** Add tests:
+  - `test_tool_update_conventions_replaces_full_file` — `content` only → `AGENTS.md` rewritten; cache refreshed
+  - `test_tool_update_conventions_replaces_section` — `section="Frontmatter"`, `content="..."` → only that `## heading` block replaced, others preserved
+  - `test_tool_update_conventions_missing_section_creates_it` — `section` not in file → section appended at end
+  - `test_tool_update_conventions_refuses_other_paths` — implicit: tool target is hardcoded to `AGENTS.md`; verify no other path is writable through it
+  - `test_tool_update_conventions_no_implicit_push` — verifies commit happens but push does not (push is `vault_sync`'s job)
+
+- [x] **8.5.2 GREEN** Implement `update_conventions(vault?, content, section?)`: write full file or in-place section replace, then `conventions.refresh()`, then `git_sync.commit()` (no push).
+
+### 8.6 Protected paths on `note_*` tools
+
+- [x] **8.6.1 RED** Add to `tests/test_vault.py`:
+  - `test_note_create_refuses_agents_md` — path `AGENTS.md` at root → raises (or returns a typed error)
+  - `test_note_create_refuses_claude_md` — same for `CLAUDE.md`
+  - `test_note_read_refuses_agents_md`
+  - `test_note_read_refuses_claude_md`
+  - `test_note_update_refuses_protected`
+  - `test_note_delete_refuses_protected`
+  - `test_protected_only_at_root` — `Notes/AGENTS.md` is **not** protected (only vault root counts)
+
+- [x] **8.6.2 GREEN** Add a protected-path check in `Vault.resolve()` or wrappers used by the four `note_*` methods. Constant: `PROTECTED_ROOT_FILES = {"AGENTS.md", "CLAUDE.md"}`.
+
+- [x] **8.6.3 RED** Add tool-level tests in `tests/test_server.py` confirming the error surfaces as an MCP error response, not an unhandled exception, for each of the four tools.
+
+- [x] **8.6.4 GREEN** Adjust tool error handling if needed.
+
+### 8.7 `note_list` excludes protected files
+
+- [x] **8.7.1 RED** Add to `tests/test_vault.py`:
+  - `test_note_list_excludes_agents_md_at_root` — vault root contains `AGENTS.md`, `notes/foo.md` → result contains `foo.md` only
+  - `test_note_list_excludes_claude_md_at_root`
+  - `test_note_list_includes_nested_agents_md` — `Notes/AGENTS.md` exists → included (exclusion is root-only)
+
+- [x] **8.7.2 GREEN** Filter `PROTECTED_ROOT_FILES` out of `note_list` results when listing the vault root.
+
+### 8.8 Startup seeding + cache priming
+
+- [x] **8.8.1 RED** Add to `tests/test_main.py`:
+  - `test_startup_seeds_missing_agents_md` — vault initialised without `AGENTS.md` → after startup, file exists and is committed
+  - `test_startup_loads_conventions_for_each_vault` — `conventions.load()` called once per configured vault before `mcp.run()`
+
+- [x] **8.8.2 GREEN** Extend the startup sequence in `__main__.py` to call `conventions.load(vault_path)` for each vault after init, before starting the server.
+
+### 8.9 MCP `initialize.instructions`
+
+- [x] **8.9.1 RED** Add to `tests/test_server.py`:
+  - `test_initialize_instructions_contains_all_vault_conventions` — in-process MCP client `initialize` response → `serverInfo.instructions` contains a labelled `## Vault: <name>` section for every configured vault, with that vault's conventions text
+  - `test_initialize_instructions_updated_after_update_conventions` — call `update_conventions`, re-initialize → new content reflected
+
+- [x] **8.9.2 GREEN** Build the `instructions` payload in `server.py` at FastMCP construction time (or via a getter the server framework calls each handshake) by iterating `conventions.get(vault_name)` for each configured vault.
+
+---
+
+## Phase 9 — `ENFORCE_FRONTMATTER` flag
+
+Default `true` preserves current behaviour. Set `false` to make the server schema-agnostic: no auto-injection of `title`/`created`/`modified`/`aliases`, no `modified` bump on update. Tag merging (mechanical preservation) is independent of the flag.
+
+### 9.1 Config flag
+
+- [x] **9.1.1 RED** Add to `tests/test_config.py`:
+  - `test_enforce_frontmatter_default_true` — no `ENFORCE_FRONTMATTER` env → `True`
+  - `test_enforce_frontmatter_false` — `ENFORCE_FRONTMATTER=false` → `False`
+  - `test_enforce_frontmatter_true_explicit` — `ENFORCE_FRONTMATTER=true` → `True`
+  - `test_enforce_frontmatter_case_insensitive` — `False`, `FALSE`, `0` all parse as `False`; `True`, `TRUE`, `1` as `True`
+
+- [x] **9.1.2 GREEN** Add `enforce_frontmatter: bool` to `ServerConfig` (or wherever the runtime config lives). Default `True`.
+
+### 9.2 `note_create` respects the flag
+
+- [x] **9.2.1 RED** Add to `tests/test_vault.py`:
+  - `test_note_create_no_enforcement_no_default_fields` — `enforce=False`, no tags passed → file has no `title`, `created`, `modified`, `aliases` (frontmatter block may be empty or absent)
+  - `test_note_create_no_enforcement_preserves_passed_tags` — `enforce=False`, `tags=["x"]` → file has `tags: [x]` only
+
+- [x] **9.2.2 GREEN** Branch in `Vault.note_create` on the enforcement flag (plumbed in via constructor or call arg). When off, skip `build_metadata` defaults and write only what was passed.
+
+### 9.3 `note_update` respects the flag
+
+- [x] **9.3.1 RED** Add to `tests/test_vault.py`:
+  - `test_note_update_no_enforcement_does_not_bump_modified` — `enforce=False`, update existing note → `modified` field unchanged (or absent)
+  - `test_note_update_no_enforcement_preserves_existing_fields` — existing custom field (e.g., `author`) preserved untouched
+  - `test_note_update_no_enforcement_tag_merge_still_works` — tag merging still applies
+
+- [x] **9.3.2 GREEN** Branch in `Vault.note_update`: when enforcement off, do not touch `modified`, and skip default-field injection. Keep tag merging.
+
+### 9.4 Wire flag from config → server → vault
+
+- [x] **9.4.1 RED** Add to `tests/test_server.py`:
+  - `test_server_passes_enforce_flag_to_vault` — `ENFORCE_FRONTMATTER=false` → tool calls behave per Phase 9.2 / 9.3 through the MCP interface
+
+- [x] **9.4.2 GREEN** Read `ServerConfig.enforce_frontmatter` in `server.py` and pass it to `Vault` instances (or to the relevant methods).
+
+### 9.5 SPEC alignment check
+
+- [x] **9.5.1** Manual: re-read SPEC.md `## Config` and `## Frontmatter format` sections to confirm `ENFORCE_FRONTMATTER` is documented (env var, default, behaviour on/off). Already updated in this iteration — verify against the implementation when done.
+
+---
+
+## Notes on already-checked phases
+
+The following items remain green because their original behaviour is the default-on path. They do **not** need to be unchecked, but the new tasks above extend their coverage:
+
+- **1.4 / 1.x ServerConfig** — extended by **9.1** (new `enforce_frontmatter` field).
+- **3.3 build_metadata / 3.4 merge_tags** — still correct; `build_metadata` is now only called when `enforce_frontmatter=True` (handled at the call site in `vault.py`, see **9.2 / 9.3**).
+- **4.2–4.5 note_* methods** — extended by **8.6** (protected-path guard) and **9.2 / 9.3** (enforcement flag).
+- **4.6 note_list** — extended by **8.7** (root-level exclusion of protected files).
+- **5.2–5.5 note_* tools** — extended by **8.6.3** (typed error on protected paths).
+- **6.3 startup sequence** — extended by **8.8** (convention loading per vault).

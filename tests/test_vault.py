@@ -243,3 +243,133 @@ def test_search_folder_scoped(tmp_path):
     paths = [r["path"] for r in results]
     assert all("Sessions" in p for p in paths)
     assert len(results) == 1
+
+
+# --- 8.6 Protected paths ---
+
+
+def test_note_create_refuses_agents_md(tmp_path):
+    vault = Vault(tmp_path)
+    with pytest.raises(PermissionError):
+        vault.note_create("AGENTS.md", "content")
+
+
+def test_note_create_refuses_claude_md(tmp_path):
+    vault = Vault(tmp_path)
+    with pytest.raises(PermissionError):
+        vault.note_create("CLAUDE.md", "content")
+
+
+def test_note_read_refuses_agents_md(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("content")
+    with pytest.raises(PermissionError):
+        vault.note_read("AGENTS.md")
+
+
+def test_note_read_refuses_claude_md(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("content")
+    with pytest.raises(PermissionError):
+        vault.note_read("CLAUDE.md")
+
+
+def test_note_update_refuses_protected(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("---\ntitle: x\n---\nbody")
+    with pytest.raises(PermissionError):
+        vault.note_update("AGENTS.md", content="hack")
+
+
+def test_note_delete_refuses_protected(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("content")
+    with pytest.raises(PermissionError):
+        vault.note_delete("AGENTS.md")
+
+
+def test_protected_only_at_root(tmp_path):
+    vault = Vault(tmp_path)
+    vault.note_create("Notes/AGENTS.md", "nested")
+    assert (tmp_path / "Notes" / "AGENTS.md").exists()
+
+
+# --- 8.7 note_list excludes protected files at root ---
+
+
+def test_note_list_excludes_agents_md_at_root(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "AGENTS.md").write_text("---\ntitle: agents\n---\n")
+    vault.note_create("notes/foo.md", "body")
+    entries = vault.note_list()
+    paths = [e["path"] for e in entries]
+    assert "AGENTS.md" not in paths
+    assert "notes/foo.md" in paths
+
+
+def test_note_list_excludes_claude_md_at_root(tmp_path):
+    vault = Vault(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("---\ntitle: claude\n---\n")
+    vault.note_create("a.md", "body")
+    entries = vault.note_list()
+    paths = [e["path"] for e in entries]
+    assert "CLAUDE.md" not in paths
+
+
+def test_note_list_includes_nested_agents_md(tmp_path):
+    vault = Vault(tmp_path)
+    vault.note_create("Notes/AGENTS.md", "nested agents")
+    entries = vault.note_list()
+    paths = [e["path"] for e in entries]
+    assert any("AGENTS.md" in p and "Notes" in p for p in paths)
+
+
+# --- 9.2 note_create enforcement flag ---
+
+
+def test_note_create_no_enforcement_no_default_fields(tmp_path):
+    vault = Vault(tmp_path, enforce_frontmatter=False)
+    vault.note_create("note.md", "content")
+    content = (tmp_path / "note.md").read_text()
+    assert "title:" not in content
+    assert "created:" not in content
+    assert "modified:" not in content
+    assert "aliases:" not in content
+
+
+def test_note_create_no_enforcement_preserves_passed_tags(tmp_path):
+    vault = Vault(tmp_path, enforce_frontmatter=False)
+    vault.note_create("note.md", "content", tags=["x"])
+    content = (tmp_path / "note.md").read_text()
+    assert "x" in content
+
+
+# --- 9.3 note_update enforcement flag ---
+
+
+def test_note_update_no_enforcement_does_not_bump_modified(tmp_path):
+    vault_on = Vault(tmp_path, enforce_frontmatter=True)
+    vault_on.note_create("note.md", "body")
+    original_modified = vault_on.note_read("note.md")[0]["modified"]
+
+    vault_off = Vault(tmp_path, enforce_frontmatter=False)
+    vault_off.note_update("note.md", content="updated body")
+    new_modified = vault_off.note_read("note.md")[0]["modified"]
+    assert new_modified == original_modified
+
+
+def test_note_update_no_enforcement_preserves_existing_fields(tmp_path):
+    (tmp_path / "note.md").write_text("---\nauthor: Alice\n---\nBody\n")
+    vault = Vault(tmp_path, enforce_frontmatter=False)
+    vault.note_update("note.md", content="Updated body")
+    meta, _ = vault.note_read("note.md")
+    assert meta.get("author") == "Alice"
+
+
+def test_note_update_no_enforcement_tag_merge_still_works(tmp_path):
+    (tmp_path / "note.md").write_text("---\ntags:\n  - existing\n---\nBody\n")
+    vault = Vault(tmp_path, enforce_frontmatter=False)
+    vault.note_update("note.md", tags=["new"])
+    meta, _ = vault.note_read("note.md")
+    assert "existing" in meta["tags"]
+    assert "new" in meta["tags"]

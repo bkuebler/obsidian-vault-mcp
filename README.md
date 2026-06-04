@@ -63,6 +63,7 @@ VAULT_DEFAULT=personal
 |---|---|---|
 | `SERVER_PORT` | `8080` | TCP port to bind (http-alt per IANA) |
 | `SERVER_IP` | `0.0.0.0` | IP address to bind |
+| `ENFORCE_FRONTMATTER` | `true` | Set `false` to disable auto-injection of `title`, `created`, `modified`, `aliases`; `note_update` will not bump `modified`; tag merging is unaffected |
 
 ### Transport
 
@@ -98,18 +99,23 @@ On container start, before accepting MCP connections:
 1. For each configured vault:
    - **Remote** — `git clone <url> /vaults/<name>/` if the directory does not exist, otherwise `git pull --rebase`
    - **Local** — `git init /vaults/<name>/` if the directory does not exist, otherwise no-op
-2. FastMCP server starts on `SERVER_IP:SERVER_PORT`
+   - If `AGENTS.md` is missing → write default template, commit (`chore: seed AGENTS.md`); push deferred to next `vault_sync`
+   - Load `AGENTS.md` into per-vault convention cache
+2. Build `initialize.instructions` payload from all cached conventions
+3. FastMCP server starts on `SERVER_IP:SERVER_PORT`
 
 ## Tools
 
 | Tool | Parameters | Description |
 |---|---|---|
 | `vault_list` | — | Lists all configured vaults with dirty flag and ahead/behind counts (remote vaults only) |
-| `note_create` | `path`, `content`, `vault?`, `tags?` | Creates a note with YAML frontmatter |
-| `note_read` | `path`, `vault?` | Returns frontmatter and body separately |
-| `note_update` | `path`, `vault?`, `content?`, `append?`, `tags?` | Replaces or appends body; merges tags; always bumps `modified` |
-| `note_delete` | `path`, `vault?` | Deletes a note |
-| `note_list` | `vault?`, `folder?` | Lists `.md` files with titles |
+| `vault_conventions` | `vault?` | Returns cached `AGENTS.md` content for a vault |
+| `update_conventions` | `vault?`, `content`, `section?` | Rewrites `AGENTS.md` (full or single `## heading` section); commits but does not push |
+| `note_create` | `path`, `content`, `vault?`, `tags?` | Creates a note with YAML frontmatter; refuses `AGENTS.md` / `CLAUDE.md` at vault root |
+| `note_read` | `path`, `vault?` | Returns frontmatter and body separately; refuses protected files |
+| `note_update` | `path`, `vault?`, `content?`, `append?`, `tags?` | Replaces or appends body; merges tags; bumps `modified` (unless `ENFORCE_FRONTMATTER=false`); refuses protected files |
+| `note_delete` | `path`, `vault?` | Deletes a note; refuses protected files |
+| `note_list` | `vault?`, `folder?` | Lists `.md` files with titles; excludes `AGENTS.md` / `CLAUDE.md` at vault root |
 | `note_search` | `query`, `vault?`, `tags?`, `folder?` | Case-insensitive full-text search with optional tag filter |
 | `vault_sync` | `vault?`, `message?` | Commits any changes and pushes (remote) or commits only (local) |
 
@@ -134,6 +140,22 @@ Parameters marked `?` are optional. All tools default to `VAULT_DEFAULT` when `v
 | Dirty tree, local vault | `committed (local only)` |
 | Clean tree, local vault | `nothing to commit or push` |
 
+## Convention authority
+
+Each vault carries an `AGENTS.md` at its root that defines folder structure, frontmatter rules, link style, and any vault-specific conventions. The server:
+
+- Seeds a default template on first start (committed, not pushed) if `AGENTS.md` is absent
+- Returns the content via `initialize.serverInfo.instructions` on every MCP handshake — spec-compliant clients surface this to the model automatically
+- Exposes it on demand via `vault_conventions` as a fallback for clients that don't surface `initialize.instructions`
+- Allows mutations only through `update_conventions` — `note_*` tools refuse to touch `AGENTS.md` (or `CLAUDE.md`) at vault root
+
+Edit conventions with:
+
+```
+update_conventions(vault="personal", section="Frontmatter", content="...")  # replace one section
+update_conventions(vault="personal", content="# Full rewrite\n...")         # replace entire file
+```
+
 ## Frontmatter
 
 Every note created by `note_create` gets:
@@ -153,6 +175,8 @@ aliases: []
 - `modified` is bumped on every `note_update`
 - `created` is never changed after initial write
 - Tags passed to `note_update` are merged, not replaced
+
+Set `ENFORCE_FRONTMATTER=false` to disable auto-injection of these fields. The vault's `AGENTS.md` then becomes the sole source of frontmatter rules and the agent is responsible for constructing them.
 
 ## Development
 
@@ -177,14 +201,17 @@ make build       # docker build -t obsidian-vault-mcp:latest .
 
 ```
 obsidian_vault_mcp/
-├── __main__.py     # Entry point: --transport flag, SERVER_PORT/SERVER_IP, startup sequence
-├── config.py       # Loads configuration from environment variables
-├── git_sync.py     # subprocess-based clone, pull, init, commit, push
-├── frontmatter.py  # YAML frontmatter read/write helpers
-├── vault.py        # Vault class: path resolution, note CRUD, search
-└── server.py       # FastMCP server and tool definitions
+├── __main__.py        # Entry point: --transport flag, SERVER_PORT/SERVER_IP, startup sequence
+├── config.py          # Loads configuration from environment variables
+├── git_sync.py        # subprocess-based clone, pull, init, commit, push
+├── frontmatter.py     # YAML frontmatter read/write helpers
+├── conventions.py     # AGENTS.md load/seed/cache/refresh; replace_section helper
+├── vault.py           # Vault class: path resolution, note CRUD, search, protected-path guard
+├── server.py          # FastMCP server and tool definitions
+└── default_AGENTS.md  # Default template seeded into vaults missing AGENTS.md
 tests/
 ├── test_config.py
+├── test_conventions.py
 ├── test_frontmatter.py
 ├── test_git_sync.py
 ├── test_main.py

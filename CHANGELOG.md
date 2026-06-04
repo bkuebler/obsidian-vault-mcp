@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-04
+
+### Added
+
+- `vault_conventions(vault?)` tool — returns cached `AGENTS.md` content for a vault
+- `update_conventions(vault?, content, section?)` tool — rewrites `AGENTS.md` in full
+  or replaces a single `## heading` section; commits but does not push
+- Convention authority: each vault carries `AGENTS.md` at its root defining folder
+  structure, frontmatter rules, and link style. A default template is seeded and
+  committed (`chore: seed AGENTS.md`) on first start if the file is missing.
+- `initialize.serverInfo.instructions` — on the MCP `initialize` handshake the server
+  returns the concatenated `AGENTS.md` content for all configured vaults under labelled
+  `## Vault: <name>` headings; spec-compliant clients surface this to their model
+  automatically without a tool call
+- `ENFORCE_FRONTMATTER` environment variable (default `true`): set to `false` to disable
+  auto-injection of `title`, `created`, `modified`, and `aliases` fields; `note_update`
+  will not bump `modified`; tag merging is unaffected by this flag
+- Protected files: `note_*` tools refuse any read or write operation on `AGENTS.md` or
+  `CLAUDE.md` at vault root; `note_list` excludes them from results. Mutations to
+  `AGENTS.md` are only possible via `update_conventions`.
+
 ## [0.1.1] - 2026-06-01
 
 ### Fixed
@@ -46,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make build` — builds the Docker image as `obsidian-vault-mcp:latest`
 - SDK contract tests to guard against breaking changes in MCP SDK upgrades
 
-[Unreleased]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/bkuebler/obsidian-vault-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bkuebler/obsidian-vault-mcp/releases/tag/v0.1.0

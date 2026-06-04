@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "obsidian-vault-mcp"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.13"
 dependencies = [
     "mcp",
@@ -17,6 +17,9 @@ obsidian-vault-mcp = "obsidian_vault_mcp.__main__:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["obsidian_vault_mcp*"]
+
+[tool.setuptools.package-data]
+obsidian_vault_mcp = ["*.md"]
 
 [project.optional-dependencies]
 dev = [
