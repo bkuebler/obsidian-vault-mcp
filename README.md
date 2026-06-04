@@ -99,7 +99,7 @@ On container start, before accepting MCP connections:
 1. For each configured vault:
    - **Remote** — `git clone <url> /vaults/<name>/` if the directory does not exist, otherwise `git pull --rebase`
    - **Local** — `git init /vaults/<name>/` if the directory does not exist, otherwise no-op
-   - If `AGENTS.md` is missing → write default template, commit (`chore: seed AGENTS.md`); push deferred to next `vault_sync`
+   - If `AGENTS.md` is missing → write default template, commit (`chore: seed AGENTS.md`); for remote vaults push immediately — if the push is rejected (another instance seeded first), discard the local seed (`git reset --hard origin/<branch>`) and load the remote `AGENTS.md` instead
    - Load `AGENTS.md` into per-vault convention cache
 2. Build `initialize.instructions` payload from all cached conventions
 3. FastMCP server starts on `SERVER_IP:SERVER_PORT`
@@ -110,7 +110,7 @@ On container start, before accepting MCP connections:
 |---|---|---|
 | `vault_list` | — | Lists all configured vaults with dirty flag and ahead/behind counts (remote vaults only) |
 | `vault_conventions` | `vault?` | Returns cached `AGENTS.md` content for a vault |
-| `update_conventions` | `vault?`, `content`, `section?` | Rewrites `AGENTS.md` (full or single `## heading` section); commits but does not push |
+| `update_conventions` | `vault?`, `content`, `section?` | Rewrites `AGENTS.md` (full or single `## heading` section); commits, pull-rebases, and pushes immediately (remote vaults); commits only for local vaults |
 | `note_create` | `path`, `content`, `vault?`, `tags?` | Creates a note with YAML frontmatter; refuses `AGENTS.md` / `CLAUDE.md` at vault root |
 | `note_read` | `path`, `vault?` | Returns frontmatter and body separately; refuses protected files |
 | `note_update` | `path`, `vault?`, `content?`, `append?`, `tags?` | Replaces or appends body; merges tags; bumps `modified` (unless `ENFORCE_FRONTMATTER=false`); refuses protected files |
@@ -135,8 +135,9 @@ Parameters marked `?` are optional. All tools default to `VAULT_DEFAULT` when `v
 | Condition | Return value |
 |---|---|
 | Dirty tree, remote vault | `committed and pushed` |
-| Clean tree, unpushed commits, remote vault | `nothing to commit, pushed N existing commit` |
+| Clean tree, unpushed commits, remote vault | `nothing to commit, pushed N existing commit after rebase` |
 | Clean tree, nothing ahead, remote vault | `nothing to commit or push` |
+| Rebase conflict, remote vault | `rebase conflict: <paths>` |
 | Dirty tree, local vault | `committed (local only)` |
 | Clean tree, local vault | `nothing to commit or push` |
 
@@ -144,10 +145,10 @@ Parameters marked `?` are optional. All tools default to `VAULT_DEFAULT` when `v
 
 Each vault carries an `AGENTS.md` at its root that defines folder structure, frontmatter rules, link style, and any vault-specific conventions. The server:
 
-- Seeds a default template on first start (committed, not pushed) if `AGENTS.md` is absent
+- Seeds a default template on first start if `AGENTS.md` is absent; commits and pushes the seed immediately for remote vaults (with race-safe reset-hard fallback)
 - Returns the content via `initialize.serverInfo.instructions` on every MCP handshake — spec-compliant clients surface this to the model automatically
 - Exposes it on demand via `vault_conventions` as a fallback for clients that don't surface `initialize.instructions`
-- Allows mutations only through `update_conventions` — `note_*` tools refuse to touch `AGENTS.md` (or `CLAUDE.md`) at vault root
+- Allows mutations only through `update_conventions` — which commits, pull-rebases, and pushes in one step; `note_*` tools refuse to touch `AGENTS.md` (or `CLAUDE.md`) at vault root
 
 Edit conventions with:
 
