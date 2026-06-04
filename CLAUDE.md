@@ -64,6 +64,27 @@ The two diverged after FastMCP 1.0 was incorporated into the SDK in 2024. The st
 
 `conventions.py` has a module-level `_cache: dict[str, str]`. `tests/conftest.py` has an `autouse` fixture that clears it before/after every test. Populate it directly in tests via `conventions._cache["vault_name"] = "content"`.
 
+## Adding git operations to existing server tools
+
+When a new `git_sync` call is added to an existing `server.py` tool, **all** existing
+tests for that tool break because they don't mock the new call. Update every affected
+test to add the new mock — not just the new tests.
+
+## Seeding detection pattern (`__main__.py`)
+
+To detect whether `conventions.load` actually wrote `AGENTS.md` (vs. was mocked):
+```python
+was_missing = not (vault_path / "AGENTS.md").exists()
+conventions.load(vc.name, vault_path)
+was_seeded = was_missing and (vault_path / "AGENTS.md").exists()
+```
+Single before-only check causes spurious pushes when `conventions.load` is mocked in tests.
+
+## AGENTS.md change detection in `vault_sync`
+
+After `pull_rebase`, detect whether `AGENTS.md` changed by comparing file content against
+`conventions._cache.get(vault_name, "")` directly — no separate snapshot needed.
+
 ## Known gaps (not yet implemented)
 
 - No CI pipeline — SPEC.md describes `ghcr.io/bkuebler/obsidian-vault-mcp:latest` as the target image but no GitHub Actions workflow exists yet
